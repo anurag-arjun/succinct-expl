@@ -2,6 +2,12 @@ use clap::Parser;
 use sp1_sdk::{SP1Stdin, ProverClient};
 use serde::{Serialize, Deserialize};
 use bincode;
+use std::path::PathBuf;
+use std::fs;
+
+const PROVING_KEY_DIR: &str = "proving_keys";
+const PROVING_KEY_FILE: &str = "usda_program.key";
+const VERIFYING_KEY_FILE: &str = "usda_program.vk";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferProof {
@@ -32,6 +38,25 @@ struct Args {
     /// Generate proof
     #[arg(long)]
     prove: bool,
+}
+
+fn get_key_paths() -> (PathBuf, PathBuf) {
+    let mut base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    base_path.push(PROVING_KEY_DIR);
+    
+    let mut pk_path = base_path.clone();
+    pk_path.push(PROVING_KEY_FILE);
+    
+    let mut vk_path = base_path;
+    vk_path.push(VERIFYING_KEY_FILE);
+    
+    (pk_path, vk_path)
+}
+
+fn ensure_proving_key_dir() -> std::io::Result<()> {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push(PROVING_KEY_DIR);
+    fs::create_dir_all(path)
 }
 
 fn main() {
@@ -91,17 +116,36 @@ fn main() {
         println!("Result: {:?}", result);
         println!("Number of cycles: {}", report.total_instruction_count());
     } else if args.prove {
-        // Setup the program for proving
-        let (pk, vk) = client.setup(elf);
+        // Ensure proving key directory exists
+        ensure_proving_key_dir().expect("Failed to create proving key directory");
         
-        // Generate the proof
+        let (pk_path, vk_path) = get_key_paths();
+        
+        // Try to load existing proving and verifying keys
+        let (pk, vk) = if pk_path.exists() && vk_path.exists() {
+            println!("Loading existing proving and verifying keys...");
+            let pk_bytes = fs::read(&pk_path).expect("Failed to read proving key");
+            let vk_bytes = fs::read(&vk_path).expect("Failed to read verifying key");
+            let pk = bincode::deserialize(&pk_bytes).expect("Failed to deserialize proving key");
+            let vk = bincode::deserialize(&vk_bytes).expect("Failed to deserialize verifying key");
+            (pk, vk)
+        } else {
+            println!("Generating new proving and verifying keys...");
+            let (pk, vk) = client.setup(elf);
+            // Save keys for future use
+            let pk_bytes = bincode::serialize(&pk).expect("Failed to serialize proving key");
+            let vk_bytes = bincode::serialize(&vk).expect("Failed to serialize verifying key");
+            fs::write(&pk_path, pk_bytes).expect("Failed to write proving key");
+            fs::write(&vk_path, vk_bytes).expect("Failed to write verifying key");
+            (pk, vk)
+        };
+        
+        println!("Generating proof...");
         let proof = client.prove(&pk, stdin).run().unwrap();
         println!("Successfully generated proof!");
         
         // Verify the proof
-        client.verify(&proof, &vk).expect("failed to verify proof");
+        client.verify(&proof, &vk).expect("Failed to verify proof");
         println!("Successfully verified proof!");
-        
-        // TODO: Save proof to file
     }
 }

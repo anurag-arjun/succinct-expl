@@ -37,3 +37,6 @@ Thumbs.db
 # Reference folders
 sp1/
 sp1_reference/
+
+# SP1 proving keys
+proving_keys/
