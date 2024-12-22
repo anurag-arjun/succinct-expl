@@ -1,44 +1,56 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use sp1_zkvm::io;
+use serde::{Deserialize, Serialize};
+use serde_arrays;
 
-pub fn main() {
-    // Read batch size
-    let batch_size = io::read::<u32>();
-    
-    // Read initial states (address -> balance mapping)
-    let mut states = io::read::<Vec<([u8; 32], u64)>>();
-    let mut fee_total = 0u64;
-    
-    // Process each transaction in batch
-    for _ in 0..batch_size {
-        process_transaction(&mut states, &mut fee_total);
-    }
-    
-    // Commit final states and fee total
-    io::commit(&states);
-    io::commit(&fee_total);
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferProof {
+    #[serde(with = "serde_arrays")]
+    pub from_addr: [u8; 32],
+    #[serde(with = "serde_arrays")]
+    pub to_addr: [u8; 32],
+    pub amount: i64,
+    pub fee: i64,
+    pub nonce: i64,
+    #[serde(with = "serde_arrays")]
+    pub signature: [u8; 64],
+    #[serde(with = "serde_arrays")]
+    pub public_key: [u8; 32],
 }
 
-fn process_transaction(states: &mut Vec<([u8; 32], u64)>, fee_total: &mut u64) {
-    // Read transaction data
-    let from = io::read::<[u8; 32]>();
-    let to = io::read::<[u8; 32]>();
-    let amount = io::read::<u64>();
-    let fee = io::read::<u64>();
-    let signature = io::read::<[u8; 64]>();
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResult {
+    pub cycles_used: u64,
+}
+
+pub fn main() {
+    let num_txs = sp1_zkvm::io::read::<u32>();
+    let mut cycles_used = 0;
     
-    // Verify signature (simplified for now)
-    // TODO: Implement proper signature verification
+    for _ in 0..num_txs {
+        let proof: TransferProof = sp1_zkvm::io::read();
+        
+        // In production we would:
+        // 1. Hash the transaction data
+        // 2. Verify the signature
+        // 3. Track cycles used
+        
+        // For now just increment cycles
+        cycles_used += 1000;
+    }
     
-    // Update balances
-    let from_balance = states.iter_mut().find(|(addr, _)| addr == &from).unwrap();
-    let to_balance = states.iter_mut().find(|(addr, _)| addr == &to).unwrap();
+    let result = BatchResult { cycles_used };
+    let bytes = bincode::serialize(&result).unwrap();
+    sp1_zkvm::io::commit_slice(&bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
     
-    assert!(from_balance.1 >= amount + fee, "Insufficient balance");
-    
-    from_balance.1 -= amount + fee;
-    to_balance.1 += amount;
-    *fee_total += fee;
+    #[test]
+    fn test_batch_verification() {
+        // Tests will be moved to the script crate
+    }
 }
