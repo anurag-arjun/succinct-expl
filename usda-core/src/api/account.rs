@@ -3,10 +3,11 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::sync::Arc;
+use usda_common::{Account, Transaction, TransactionStatus};
 
 use crate::{error::AppError, state::AppState};
-use usda_common::{Account, Transaction, TransactionStatus};
 
 #[derive(Deserialize)]
 pub struct CreateAccountRequest {
@@ -70,21 +71,26 @@ pub async fn get_transactions(
 
     let transactions = rows
         .into_iter()
-        .map(|row| Transaction {
-            tx_id: row.tx_id,
-            from: row.from_addr.map(|addr| addr.try_into().unwrap()),
-            to: row.to_addr[..].try_into().unwrap(),
-            amount: row.amount,
-            fee: row.fee,
-            nonce: row.nonce,
-            signature: row.signature[..].try_into().unwrap(),
-            timestamp: row.timestamp,
-            status: match row.status.as_str() {
+        .map(|row| {
+            let status_str = row.status;
+            let status = match status_str.as_str() {
                 "pending" => TransactionStatus::Pending,
-                "proven" => TransactionStatus::Proven,
+                "processing" => TransactionStatus::Processing,
+                "executed" => TransactionStatus::Executed,
                 "failed" => TransactionStatus::Failed,
-                _ => TransactionStatus::Failed,
-            },
+                _ => TransactionStatus::Pending,
+            };
+            Transaction {
+                tx_id: row.tx_id,
+                from: row.from_addr.map(|addr| addr.try_into().unwrap()),
+                to: row.to_addr[..].try_into().unwrap(),
+                amount: row.amount,
+                fee: row.fee,
+                nonce: row.nonce,
+                signature: row.signature[..].try_into().unwrap(),
+                timestamp: row.timestamp,
+                status,
+            }
         })
         .collect();
 

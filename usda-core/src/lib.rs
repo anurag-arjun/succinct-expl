@@ -1,7 +1,15 @@
 pub mod api;
-pub mod state;
+pub mod batch;
 pub mod error;
+pub mod state;
 pub mod websocket;
+
+use sqlx::PgPool;
+use tokio::sync::broadcast;
+use usda_common::WebSocketUpdate;
+
+pub use error::AppError;
+pub use state::AppState;
 
 #[cfg(test)]
 mod tests {
@@ -10,7 +18,7 @@ mod tests {
     mod transaction_tests;
     mod mint_tests;
 
-    use crate::state::AppState;
+    use crate::AppState;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
 

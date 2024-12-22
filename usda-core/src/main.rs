@@ -1,58 +1,75 @@
+use std::{net::SocketAddr, sync::Arc};
+
 use axum::{
     routing::{get, post},
     Router,
 };
-use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use sqlx::postgres::PgPoolOptions;
+use tokio::sync::broadcast;
 
-mod api;
-mod error;
-mod state;
-mod websocket;
+use crate::{
+    api::{account::*, query::*, transaction::*, websocket::*},
+    batch::BatchProcessor,
+    websocket::WebSocketState,
+};
 
-use state::AppState;
+pub struct AppState {
+    pub db: sqlx::PgPool,
+    pub updates: broadcast::Sender<WebSocketUpdate>,
+}
 
 #[tokio::main]
 async fn main() {
-    // Create database connection pool
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
-    let pool = sqlx::PgPool::connect(&database_url)
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+
+    // Create connection pool
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect("postgres://localhost/usda_test")
         .await
         .expect("Failed to connect to Postgres");
 
+    // Create WebSocket state
+    let websocket_state = Arc::new(WebSocketState::new(pool.clone()));
+    let updates = websocket_state.updates.clone();
+
     // Create app state
-    let state = Arc::new(AppState::new(pool));
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        updates: updates.clone(),
+    });
 
-    // Create CORS layer
-    let cors = CorsLayer::new()
-        .allow_methods(Any)
-        .allow_headers(Any)
-        .allow_origin(Any);
+    // Create batch processor
+    let processor = BatchProcessor::new(pool, updates);
 
-    // Build our application with a route
+    // Spawn batch processor task
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = processor.process_batch().await {
+                tracing::error!("Error processing batch: {}", e);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+        }
+    });
+
+    // Build router
     let app = Router::new()
-        // Health check route
-        .route("/health", get(health_check))
-        // Account routes
-        .route("/account/create", post(api::account::create))
-        .route("/account/:address/balance", get(api::account::get_balance))
-        .route("/account/:address/transactions", get(api::account::get_transactions))
-        // Transaction routes
-        .route("/transaction/transfer", post(api::transaction::transfer))
-        // WebSocket route
-        .route("/ws", get(websocket::handler))
-        .layer(cors)
+        .route("/accounts/:address/balance", get(get_balance))
+        .route("/accounts/:address/nonce", get(get_nonce))
+        .route("/transactions", post(submit_transaction))
+        .route("/transactions/:tx_id", get(get_transaction))
+        .route("/transactions/:tx_id/status", get(get_transaction_status))
+        .route("/proofs/:batch_id", get(get_proof_status))
+        .route("/proofs", get(list_proofs))
+        .route("/ws", get(handle_socket))
         .with_state(state);
 
     // Start server
-    println!("Starting server on http://localhost:3000");
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    tracing::info!("listening on {}", addr);
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
         .await
         .unwrap();
-    axum::serve(listener, app).await.unwrap();
-}
-
-async fn health_check() -> &'static str {
-    "OK"
 }

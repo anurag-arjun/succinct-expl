@@ -1,153 +1,179 @@
-use axum::{extract::State, Json};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use usda_common::TransactionStatus;
+use axum::{
+    extract::{Path, State},
+    Json,
+};
+use sqlx::PgPool;
 use uuid::Uuid;
+use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 
-use crate::{error::AppError, state::AppState};
+use crate::{AppError, AppState};
+use usda_common::{TransactionStatus, WebSocketUpdate, TransactionUpdate};
 
-#[derive(Debug, Deserialize)]
-pub struct TransferRequest {
-    pub from: Option<String>,    // hex encoded address
-    pub to: String,      // hex encoded address
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TransactionRequest {
+    pub from_address: [u8; 32],
+    pub to_address: [u8; 32],
     pub amount: i64,
-    pub fee: i64,
     pub nonce: i64,
-    pub signature: String, // hex encoded signature
+    pub signature: Vec<u8>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct TransactionResponse {
-    pub tx_id: String,
-    pub status: String,
+    pub tx_id: Uuid,
+    pub status: TransactionStatus,
+    pub message: Option<String>,
 }
 
-pub async fn transfer(
+pub async fn create_transaction(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<TransferRequest>,
+    Json(request): Json<TransactionRequest>,
 ) -> Result<Json<TransactionResponse>, AppError> {
+    // Start transaction
+    let mut tx = state.db.begin().await?;
+
     // Validate amount
-    if req.amount <= 0 {
-        return Err(AppError::InvalidInput("Transfer amount must be positive".into()));
+    if request.amount <= 0 {
+        return Err(AppError::InvalidAmount("Transfer amount must be positive".to_string()));
     }
 
-    // Start a transaction for atomicity
-    let mut tx = state.db.begin().await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-
-    // Get sender account if this is not a mint operation
-    if let Some(from) = &req.from {
-        let from_bytes = hex::decode(from)
-            .map_err(|_| AppError::InvalidInput("Invalid from address".into()))?;
-        if from_bytes.len() != 32 {
-            return Err(AppError::InvalidInput("Invalid from address length".into()));
-        }
-
-        let sender = sqlx::query!(
-            r#"
-            SELECT balance, nonce
-            FROM accounts
-            WHERE address = $1
-            FOR UPDATE
-            "#,
-            from_bytes.as_slice()
-        )
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("Sender account not found".into()))?;
-
-        // Verify nonce
-        if sender.nonce != req.nonce {
-            return Err(AppError::InvalidInput(format!(
-                "Invalid nonce. Expected {}, got {}",
-                sender.nonce, req.nonce
-            )));
-        }
-
-        // Verify signature
-        let signature_bytes = hex::decode(&req.signature)
-            .map_err(|_| AppError::InvalidInput("Invalid signature".into()))?;
-        if signature_bytes.len() != 64 {
-            return Err(AppError::InvalidInput("Invalid signature length".into()));
-        }
-
-        let to_bytes = hex::decode(&req.to)
-            .map_err(|_| AppError::InvalidInput("Invalid to address".into()))?;
-        if to_bytes.len() != 32 {
-            return Err(AppError::InvalidInput("Invalid to address length".into()));
-        }
-
-        // Check sufficient balance
-        if sender.balance < req.amount + req.fee {
-            return Err(AppError::InsufficientBalance);
-        }
-
-        // Update sender's balance and nonce
-        sqlx::query!(
-            r#"
-            UPDATE accounts
-            SET balance = balance - $1,
-                nonce = nonce + 1
-            WHERE address = $2
-            "#,
-            req.amount + req.fee,
-            from_bytes.as_slice()
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-    }
-
-    // Update receiver's balance
-    let to_bytes = hex::decode(&req.to)
-        .map_err(|_| AppError::InvalidInput("Invalid to address".into()))?;
-    if to_bytes.len() != 32 {
-        return Err(AppError::InvalidInput("Invalid to address length".into()));
-    }
-
-    sqlx::query!(
+    // Get from account
+    let from_account = sqlx::query!(
         r#"
-        INSERT INTO accounts (address, balance, nonce)
-        VALUES ($1, $2, 0)
-        ON CONFLICT (address) DO UPDATE
-        SET balance = accounts.balance + $2
+        SELECT balance, nonce
+        FROM accounts
+        WHERE address = $1
+        FOR UPDATE
         "#,
-        to_bytes.as_slice(),
-        req.amount
+        &request.from_address[..]
     )
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound("From account not found".to_string()))?;
+
+    // Check nonce
+    if from_account.nonce != request.nonce {
+        return Err(AppError::InvalidNonce("Invalid nonce".to_string()));
+    }
+
+    // Check balance
+    if from_account.balance < request.amount {
+        return Err(AppError::InsufficientBalance("Insufficient balance".to_string()));
+    }
+
+    // Verify signature
+    if let Some(issuer_key) = state.get_issuer_key() {
+        // TODO: Implement signature verification
+        // if !verify_signature(&request, &issuer_key) {
+        //     return Err(AppError::InvalidSignature("Invalid signature".to_string()));
+        // }
+    }
 
     // Create transaction record
-    let tx_id = Uuid::new_v4().to_string();
-    let from_addr = req.from.as_ref().map(|f| hex::decode(f).unwrap());
-    
+    let tx_id = Uuid::new_v4();
+    let status = TransactionStatus::Processing;
+
     sqlx::query!(
         r#"
-        INSERT INTO transactions (tx_id, from_addr, to_addr, amount, fee, nonce, signature, timestamp, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+        INSERT INTO transactions (tx_id, from_address, to_address, amount, status)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
         tx_id,
-        from_addr.as_deref(),
-        to_bytes.as_slice(),
-        req.amount,
-        req.fee,
-        req.nonce,
-        hex::decode(&req.signature).unwrap_or_default(),
-        TransactionStatus::Pending.to_string()
+        &request.from_address[..],
+        &request.to_address[..],
+        request.amount,
+        status as TransactionStatus,
     )
     .execute(&mut *tx)
-    .await
-    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    .await?;
+
+    // Update account balances
+    sqlx::query!(
+        r#"
+        UPDATE accounts
+        SET balance = balance - $1,
+            pending_balance = pending_balance - $1,
+            nonce = nonce + 1
+        WHERE address = $2
+        "#,
+        request.amount,
+        &request.from_address[..],
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE accounts
+        SET pending_balance = pending_balance + $1
+        WHERE address = $2
+        "#,
+        request.amount,
+        &request.to_address[..],
+    )
+    .execute(&mut *tx)
+    .await?;
 
     // Commit transaction
-    tx.commit()
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    tx.commit().await?;
+
+    // Publish update
+    let update = WebSocketUpdate::Transaction(TransactionUpdate {
+        tx_id: tx_id.to_string(),
+        status,
+        message: None,
+    });
+    let _ = state.tx.send(update);
 
     Ok(Json(TransactionResponse {
         tx_id,
-        status: TransactionStatus::Pending.to_string(),
+        status,
+        message: None,
     }))
+}
+
+pub async fn get_transaction(
+    State(state): State<Arc<AppState>>,
+    Path(tx_id): Path<Uuid>,
+) -> Result<Json<TransactionResponse>, AppError> {
+    let result = sqlx::query!(
+        r#"
+        SELECT status, message
+        FROM transactions
+        WHERE tx_id = $1
+        "#,
+        tx_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Transaction not found".to_string()))?;
+
+    Ok(Json(TransactionResponse {
+        tx_id,
+        status: result.status,
+        message: result.message,
+    }))
+}
+
+async fn update_status(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx_id: Uuid,
+    status: TransactionStatus,
+    message: Option<String>,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        r#"
+        UPDATE transactions
+        SET status = $1, message = $2
+        WHERE tx_id = $3
+        "#,
+        status as TransactionStatus,
+        message,
+        tx_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
