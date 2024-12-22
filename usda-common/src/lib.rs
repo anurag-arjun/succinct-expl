@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -18,33 +19,48 @@ pub struct Transaction {
     pub status: TransactionStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum TransactionStatus {
     Pending,
-    Proven,
+    Processing,
+    Executed,
     Failed,
+}
+
+impl TransactionStatus {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "processing" => Some(Self::Processing),
+            "executed" => Some(Self::Executed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for TransactionStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TransactionStatus::Pending => write!(f, "PENDING"),
-            TransactionStatus::Proven => write!(f, "PROVEN"),
-            TransactionStatus::Failed => write!(f, "FAILED"),
+            Self::Pending => write!(f, "pending"),
+            Self::Processing => write!(f, "processing"),
+            Self::Executed => write!(f, "executed"),
+            Self::Failed => write!(f, "failed"),
         }
     }
 }
 
-impl std::str::FromStr for TransactionStatus {
-    type Err = String;
+impl TransactionStatus {
+    pub fn is_final(&self) -> bool {
+        matches!(
+            self,
+            TransactionStatus::Executed | TransactionStatus::Failed
+        )
+    }
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "PENDING" => Ok(TransactionStatus::Pending),
-            "PROVEN" => Ok(TransactionStatus::Proven),
-            "FAILED" => Ok(TransactionStatus::Failed),
-            _ => Err(format!("Invalid transaction status: {}", s)),
-        }
+    pub fn is_error(&self) -> bool {
+        matches!(self, TransactionStatus::Failed)
     }
 }
 
@@ -67,6 +83,12 @@ pub struct BatchProof {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResult {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WebSocketMessage {
     TransactionPreconfirmed(Transaction),
     TransactionProven(Transaction),
@@ -75,6 +97,37 @@ pub enum WebSocketMessage {
         address: [u8; 32], 
         balance: i64 
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum WebSocketUpdate {
+    Transaction(TransactionUpdate),
+    Proof(ProofUpdate),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionUpdate {
+    pub tx_id: String,
+    pub status: TransactionStatus,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofUpdate {
+    pub proof_id: String,
+    pub status: ProofStatus,
+    pub message: Option<String>,
+    pub num_transactions: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProofStatus {
+    Pending,
+    Processing,
+    Generated,
+    Failed,
 }
 
 mod hex_array {
@@ -132,3 +185,5 @@ mod hex_array_opt {
         }
     }
 }
+
+pub mod validation;
