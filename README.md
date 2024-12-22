@@ -1,158 +1,138 @@
 # USDA (Unified Succinct Digital Assets)
 
-A digital asset system that uses zero-knowledge proofs for transaction verification.
+A digital asset system that uses zero-knowledge proofs for transaction verification, built on the SP1 ZK VM framework.
 
 ## Project Structure
 
-The project consists of three main components:
+The project consists of four main components:
 
-- **usda-common**: Shared types and utilities
+- **usda-common**: Shared types, validation logic, and utilities
+  - Transaction and proof status tracking
+  - WebSocket update types and serialization
+  - Account and balance management types
+  - Error types and handling
+
 - **usda-core**: Core service implementation and API endpoints
+  - Real-time WebSocket updates for transactions and proofs
+  - Thread-safe state management with Arc and Mutex
+  - Transaction processing with proper error handling
+  - PostgreSQL integration with row-level locking
+  - Broadcast channels for WebSocket messaging
+
 - **usda-program**: Zero-knowledge proof program implementation
+  - SP1 ZK VM integration
+  - Transaction batch verification
+  - State validation (balances, nonces)
+  - Proof generation logic
+
+- **usda-script**: CLI tools and proof management
+  - Proof generation and verification
+  - Key management utilities
+  - Transaction execution modes
+  - Proving/verifying key management
 
 ## Features
 
-### Implemented 
-
-#### Account Management
-- Account creation with ED25519 key pairs
-- Balance retrieval
-- Transaction history retrieval
-- Real-time balance updates via WebSocket
-
-#### Transaction Processing
-- Token transfers between accounts
-- Transaction signature verification
-- Balance checks and updates
-- Pending balance tracking
-- Transaction fee handling (10%)
-- Token minting (admin operation)
-- Concurrent transaction processing with batching
-- Row-level locking for consistent updates
-
-#### Performance
-- Sustained throughput of ~2,500 TPS in benchmarks
-- Batch processing of 1,000 transactions per batch
-- Optimized database queries with indexes
-- Connection pooling with 50 concurrent connections
-
-#### API Endpoints
-- `POST /account/create`: Create a new account
-- `GET /account/:address/balance`: Get account balance
-- `GET /account/:address/transactions`: Get account transaction history
-- `POST /transaction/transfer`: Transfer tokens between accounts
-- `POST /transaction/mint`: Mint new tokens (admin only)
-- `GET /ws`: WebSocket for real-time updates
-
-#### Testing
-- Unit tests for account operations
-- Unit tests for transaction processing
-- Database utilities for test setup
-- Performance benchmarks for concurrent transfers
-- Integration tests for API endpoints
-
-### Pending 
-
-#### Zero-Knowledge Proof Integration
-- [ ] Implement proof generation in `usda-program`
-- [ ] Add proof verification to transaction processing
-- [ ] Update transaction status on proof verification
-- [ ] Batch proof processing
-
-#### Additional Features
-- [ ] Batch transaction processing
-- [ ] Rate limiting
-- [ ] Admin dashboard
-- [ ] Transaction fee configuration
-- [ ] Account recovery mechanisms
-
-#### Testing
-- [ ] WebSocket notification tests
-- [ ] Proof verification tests
-- [ ] Security tests
-
-#### Documentation
-- [ ] API documentation
-- [ ] Deployment guide
-- [ ] Architecture documentation
-- [ ] Development setup guide
-
-#### Operations
-- [ ] Metrics collection
-- [ ] Structured logging
-- [ ] Health check endpoints
-- [ ] Database migration tools
-- [ ] Monitoring dashboard
-- [ ] Backup and recovery procedures
-
-## Benchmarks
-
-The system has been tested with the following workload:
-
-### Account Creation
-- 10,000 accounts created in 3.78s
-- 2,643 accounts per second
-- Each account initialized with 100,000 tokens
+### Core Features
+- Account Management
+  - Account creation with ED25519 key pairs
+  - Balance and pending balance tracking
+  - Transaction history with status updates
+  - Real-time updates via WebSocket
 
 ### Transaction Processing
-- 1,000,000 transfers completed in 402.26s
-- 2,486 transfers per second (sustained)
-- 99.07% success rate (990,736 successful transfers)
-- Consistent total balance maintained throughout
-- Transfer amounts: 1-1,000 tokens
-- 10% fee per transfer
+- Token transfers between accounts
+- ED25519 signature verification
+- Atomic balance updates with row-level locking
+- Transaction status tracking (Pending, Processing, Executed, Failed)
+- Proper error handling for various failure cases:
+  - Invalid input
+  - Invalid amount
+  - Invalid nonce
+  - Invalid signature
+  - Insufficient balance
 
-### Database Performance
-- 50 concurrent database connections
-- Batch size of 1,000 transfers
-- Row-level locking with SKIP LOCKED
-- Indexes on frequently accessed columns
-- 4 queries per transfer (sender, receiver, fee, transaction)
+### WebSocket Integration
+- Real-time transaction status updates
+- Proof generation progress updates
+- Structured message types for both transactions and proofs
+- Broadcast channel for efficient message distribution
+- Proper connection handling and cleanup
+
+### API Endpoints
+- `POST /transaction`: Create and process a new transaction
+- `GET /transaction/:tx_id`: Get transaction status
+- `GET /ws`: WebSocket endpoint for real-time updates
 
 ## Getting Started
 
 ### Prerequisites
-- Rust 1.70 or later
-- PostgreSQL 14 or later
-- Docker (optional)
+- Rust toolchain (2021 edition)
+- PostgreSQL database
+- SP1 ZK VM framework
 
-### Setup
+### Database Setup
+1. Create a PostgreSQL database:
+   ```sql
+   CREATE DATABASE usda_test;
+   ```
 
-1. Clone the repository:
+2. Set up the schema:
+   ```sql
+   CREATE TABLE accounts (
+     address BYTEA PRIMARY KEY,
+     balance BIGINT NOT NULL,
+     pending_balance BIGINT NOT NULL,
+     nonce BIGINT NOT NULL,
+     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+   );
+
+   CREATE TABLE transactions (
+     tx_id UUID PRIMARY KEY,
+     from_address BYTEA NOT NULL,
+     to_address BYTEA NOT NULL,
+     amount BIGINT NOT NULL,
+     status TEXT NOT NULL,
+     message TEXT,
+     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+   );
+   ```
+
+### Installation
+1. Clone the repository
+2. Install dependencies: `cargo build`
+3. Set environment variables:
+   ```bash
+   export DATABASE_URL=postgres://localhost/usda_test
+   ```
+
+### Running Tests
 ```bash
-git clone git@github.com:anurag-arjun/succinct-expl.git
-cd succinct-expl
+cargo test -p usda-common
+cargo test -p usda-core
 ```
 
-2. Set up the database:
-```bash
-# Set the database URL
-export DATABASE_URL=postgres://localhost/usda_test
+## Development Status (as of Dec 23, 2024)
 
-# Create the database
-sqlx database create
+### Completed
+- Basic transaction processing with proper error handling
+- WebSocket integration for real-time updates
+- Thread-safe state management
+- Database schema and integration
+- Common type definitions and serialization
+- Comprehensive test coverage for core functionality
 
-# Run migrations
-sqlx migrate run
-```
+### In Progress
+- Signature verification implementation
+- Batch processing optimization
+- Zero-knowledge proof integration
+- CLI tools development
 
-3. Build and run tests:
-```bash
-# Build all components
-cargo build
+### Next Steps
+- Implement proof generation and verification
+- Add admin operations (minting, configuration)
+- Enhance monitoring and metrics
+- Add rate limiting and security features
 
-# Run unit tests
-cargo test
-
-# Run benchmark tests
-cargo test --test benchmark_test -- --nocapture
-```
-
-4. Run the service:
-```bash
-cargo run
-```
-
-## License
-
-[MIT License](LICENSE)
+## Contributing
+Contributions are welcome! Please feel free to submit a Pull Request.
