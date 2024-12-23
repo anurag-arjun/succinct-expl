@@ -1,6 +1,6 @@
 # USDA (Unified Succinct Digital Assets)
 
-A digital asset system that uses zero-knowledge proofs for transaction verification, built on the SP1 ZK VM framework.
+A digital asset system that uses zero-knowledge proofs for transaction verification and Avail for data availability sampling, built on the SP1 ZK VM framework.
 
 ## Project Structure
 
@@ -11,6 +11,9 @@ The project consists of four main components:
   - WebSocket update types and serialization
   - Account and balance management types
   - Error types and handling
+  - Data Availability Sampling (DAS) verification
+  - Avail client integration
+  - Finality tracking
 
 - **usda-core**: Core service implementation and API endpoints
   - Real-time WebSocket updates for transactions and proofs
@@ -18,18 +21,48 @@ The project consists of four main components:
   - Transaction processing with proper error handling
   - PostgreSQL integration with row-level locking
   - Broadcast channels for WebSocket messaging
+  - Batch transaction processing
+  - Worker pool for proof generation
 
 - **usda-program**: Zero-knowledge proof program implementation
   - SP1 ZK VM integration
   - Transaction batch verification
   - State validation (balances, nonces)
   - Proof generation logic
+  - Circuit optimization for batch processing
 
 - **usda-script**: CLI tools and proof management
   - Proof generation and verification
   - Key management utilities
   - Transaction execution modes
   - Proving/verifying key management
+
+## Development Status
+
+### Completed Features
+- [x] Basic account management with ED25519 keys
+- [x] PostgreSQL integration with migrations
+- [x] Transaction processing and validation
+- [x] WebSocket real-time updates
+- [x] Batch transaction processing
+- [x] Data Availability Sampling integration
+- [x] Avail client implementation
+- [x] Light client process management
+- [x] Verification progress tracking
+
+### In Progress
+- [ ] ZK proof generation optimization
+- [ ] Batch verification circuits
+- [ ] Performance benchmarking
+- [ ] Monitoring and metrics
+- [ ] Production deployment setup
+
+### Planned Features
+- [ ] Account recovery mechanisms
+- [ ] Advanced transaction types
+- [ ] Multi-signature support
+- [ ] Cross-chain integration
+- [ ] Advanced state sync mechanisms
 
 ## Features
 
@@ -45,24 +78,13 @@ The project consists of four main components:
 - ED25519 signature verification
 - Atomic balance updates with row-level locking
 - Transaction status tracking (Pending, Processing, Executed, Failed)
+- Batch processing for improved throughput
 - Proper error handling for various failure cases:
   - Invalid input
   - Invalid amount
   - Invalid nonce
   - Invalid signature
   - Insufficient balance
-
-### WebSocket Integration
-- Real-time transaction status updates
-- Proof generation progress updates
-- Structured message types for both transactions and proofs
-- Broadcast channel for efficient message distribution
-- Proper connection handling and cleanup
-
-### API Endpoints
-- `POST /transaction`: Create and process a new transaction
-- `GET /transaction/:tx_id`: Get transaction status
-- `GET /ws`: WebSocket endpoint for real-time updates
 
 ### Data Availability Sampling (DAS)
 - Integration with Avail's light client for DAS verification
@@ -72,17 +94,21 @@ The project consists of four main components:
   - Cell-level verification progress
   - Confidence metrics
 - Automatic light client process management
-- Database schema for verification tracking:
-  ```sql
-  CREATE TABLE das_verifications (
-      id UUID PRIMARY KEY,
-      block_hash TEXT NOT NULL,
-      block_number BIGINT NOT NULL,
-      status JSONB NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL
-  );
-  ```
+
+### WebSocket Integration
+- Real-time transaction status updates
+- Proof generation progress updates
+- DAS verification progress updates
+- Structured message types for transactions, proofs, and verifications
+- Broadcast channel for efficient message distribution
+- Proper connection handling and cleanup
+
+### API Endpoints
+- `POST /transaction`: Create and process a new transaction
+- `POST /batch`: Submit a batch of transactions
+- `GET /transaction/:tx_id`: Get transaction status
+- `GET /batch/:batch_id`: Get batch status
+- `GET /ws`: WebSocket endpoint for real-time updates
 
 ## Getting Started
 
@@ -126,6 +152,15 @@ The project consists of four main components:
      message TEXT,
      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
    );
+
+   CREATE TABLE das_verifications (
+     id UUID PRIMARY KEY,
+     block_hash TEXT NOT NULL,
+     block_number BIGINT NOT NULL,
+     status JSONB NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL,
+     updated_at TIMESTAMPTZ NOT NULL
+   );
    ```
 
 ### Installation
@@ -141,28 +176,6 @@ The project consists of four main components:
 cargo test -p usda-common
 cargo test -p usda-core
 ```
-
-## Development Status (as of Dec 23, 2024)
-
-### Completed
-- Basic transaction processing with proper error handling
-- WebSocket integration for real-time updates
-- Thread-safe state management
-- Database schema and integration
-- Common type definitions and serialization
-- Comprehensive test coverage for core functionality
-
-### In Progress
-- Signature verification implementation
-- Batch processing optimization
-- Zero-knowledge proof integration
-- CLI tools development
-
-### Next Steps
-- Implement proof generation and verification
-- Add admin operations (minting, configuration)
-- Enhance monitoring and metrics
-- Add rate limiting and security features
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
