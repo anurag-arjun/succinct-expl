@@ -64,6 +64,26 @@ The project consists of four main components:
 - `GET /transaction/:tx_id`: Get transaction status
 - `GET /ws`: WebSocket endpoint for real-time updates
 
+### Data Availability Sampling (DAS)
+- Integration with Avail's light client for DAS verification
+- Real-time verification progress tracking
+- Detailed verification state management:
+  - Block verification status
+  - Cell-level verification progress
+  - Confidence metrics
+- Automatic light client process management
+- Database schema for verification tracking:
+  ```sql
+  CREATE TABLE das_verifications (
+      id UUID PRIMARY KEY,
+      block_hash TEXT NOT NULL,
+      block_number BIGINT NOT NULL,
+      status JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+  );
+  ```
+
 ## Getting Started
 
 ### Prerequisites
@@ -72,12 +92,22 @@ The project consists of four main components:
 - SP1 ZK VM framework
 
 ### Database Setup
-1. Create a PostgreSQL database:
+1. Set the database URL:
+   ```bash
+   export DATABASE_URL=postgres://localhost/usda_test
+   ```
+
+2. Run migrations:
+   ```bash
+   cargo sqlx migrate run
+   ```
+
+3. Create a PostgreSQL database:
    ```sql
    CREATE DATABASE usda_test;
    ```
 
-2. Set up the schema:
+4. Set up the schema:
    ```sql
    CREATE TABLE accounts (
      address BYTEA PRIMARY KEY,
